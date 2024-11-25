@@ -1,19 +1,30 @@
+const https = require('https');
+const fs = require('fs');
 const express = require('express');
-const http = require('http');
 const { Server } = require('socket.io');
+const path = require('path');
 
 const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
 
-app.use(express.static('public')); // Serve static files for frontend
+// Serve static files
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Load SSL certificate and key
+const options = {
+    key: fs.readFileSync('selfsigned.key'),
+    cert: fs.readFileSync('selfsigned.crt'),
+};
+
+// Create HTTPS server
+const server = https.createServer(options, app);
+
+// Initialize Socket.IO
+const io = new Server(server);
 
 io.on('connection', (socket) => {
     console.log('A user connected:', socket.id);
 
-    // Listen for screen sharing data from a user
     socket.on('screen-data', (data) => {
-        // Broadcast screen data to all other users
         socket.broadcast.emit('screen-data', data);
     });
 
@@ -22,7 +33,7 @@ io.on('connection', (socket) => {
     });
 });
 
-const PORT = 3000;
-server.listen(PORT, () => {
-    console.log(`Server is running on http://localhost:${PORT}`);
+const PORT = 3123;
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server is running on https://66.228.42.137:${PORT}`);
 });

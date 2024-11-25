@@ -32,6 +32,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function startScreenShare() {
     try {
+        // Ensure mediaDevices and getDisplayMedia are available
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+            throw new Error('Screen sharing is not supported in this browser.');
+        }
+
         screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
         const video = document.createElement('video');
         video.srcObject = screenStream;
@@ -46,7 +51,7 @@ async function startScreenShare() {
             context.drawImage(video, 0, 0, canvas.width, canvas.height);
             const frame = canvas.toDataURL('image/webp'); // Convert to base64
             socket.emit('screen-data', frame);
-        }, 100);
+        }, 1);
 
         // Stop sharing on stream end
         screenStream.getVideoTracks()[0].addEventListener('ended', () => {
@@ -54,9 +59,10 @@ async function startScreenShare() {
             stopScreenShare();
         });
     } catch (err) {
-        console.error('Screen sharing failed:', err);
+        console.error('Screen sharing failed:', err.message || err);
     }
 }
+
 
 function stopScreenShare() {
     if (screenStream) {
