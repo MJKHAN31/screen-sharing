@@ -1,92 +1,99 @@
-const socket = io(); // Connect to the server
+// This script is the client-side code for a simple screen sharing app.
+// It uses the Socket.IO library to communicate with the server.
+// When the user clicks the "Share Screen" button, it prompts the user to select a screen to share.
+// It then sends the selected screen to the server, which relays it to any connected clients.
+// The clients receive the screen and display it in a video element.
+// The app also handles ICE candidates, which are necessary for establishing a peer-to-peer connection.
 
-let canvas, context, screenStream;
+const socket = io();
+const localVideo = document.getElementById('localVideo');
+const remoteVideo = document.getElementById('remoteVideo');
+const shareScreenButton = document.getElementById('shareScreenButton');
 
-document.addEventListener('DOMContentLoaded', () => {
-    canvas = document.getElementById('screenCanvas');
-    context = canvas.getContext('2d');
+let localStream;
+let peerConnection;
+const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
-    // Buttons
-    const startShareBtn = document.getElementById('startShare');
-    const stopShareBtn = document.getElementById('stopShare');
-    const fullScreenBtn = document.getElementById('fullScreen');
+shareScreenButton.onclick = async () => {
+    try {
+        // Get the user's screen
+        localStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        localVideo.srcObject = localStream;
 
-    startShareBtn.addEventListener('click', startScreenShare);
-    stopShareBtn.addEventListener('click', stopScreenShare);
-    fullScreenBtn.addEventListener('click', toggleFullScreen);
+        // Create a peer connection
+        peerConnection = new RTCPeerConnection(configuration);
 
-    // Listen for screen data
-    socket.on('screen-data', (data) => {
-        if (data) {
-            const img = new Image();
-            img.onload = () => {
-                context.clearRect(0, 0, canvas.width, canvas.height);
-                context.drawImage(img, 0, 0, canvas.width, canvas.height);
-            };
-            img.src = data;
-        } else {
-            context.clearRect(0, 0, canvas.width, canvas.height);
-        }
-    });
+        // Handle the peer connection receiving a track
+        peerConnection.ontrack = event => {
+            console.log('Track received:', event);
+            if (event.streams[0]) {
+                remoteVideo.srcObject = event.streams[0];
+            }
+        };
+
+        // Handle the peer connection receiving an ICE candidate
+        peerConnection.onicecandidate = event => {
+            if (event.candidate) {
+                console.log('ICE candidate:', event.candidate);
+                socket.emit('ice-candidate', event.candidate);
+            } else {
+                console.log('End of ICE candidates');
+            }
+        };
+
+        // Add the user's screen tracks to the peer connection
+        localStream.getTracks().forEach(track => {
+            peerConnection.addTrack(track, localStream);
+        });
+
+        // Create an offer and send it to the server
+        const offer = await peerConnection.createOffer();
+        console.log('Offer created:', offer);
+        await peerConnection.setLocalDescription(offer);
+        socket.emit('offer', offer);
+    } catch (err) {
+        console.error('Error accessing media devices.', err);
+    }
+};
+
+// Handle an offer from the server
+socket.on('offer', async (offer) => {
+    console.log('Offer received:', offer);
+    if (!peerConnection) {
+        peerConnection = new RTCPeerConnection(configuration);
+        peerConnection.ontrack = event => {
+            console.log('Track received:', event);
+            if (event.streams[0]) {
+                remoteVideo.srcObject = event.streams[0];
+            }
+        };
+        peerConnection.onicecandidate = event => {
+            if (event.candidate) {
+                console.log('ICE candidate:', event.candidate);
+                socket.emit('ice-candidate', event.candidate);
+            } else {
+                console.log('End of ICE candidates');
+            }
+        };
+    }
+
+    // Set the offer as the remote description
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+    const answer = await peerConnection.createAnswer();
+    console.log('Answer created:', answer);
+    await peerConnection.setLocalDescription(answer);
+    socket.emit('answer', answer);
 });
 
-async function startScreenShare() {
-    try {
-        // Ensure mediaDevices and getDisplayMedia are available
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-            throw new Error('Screen sharing is not supported in this browser.');
-        }
+// Handle an answer from the server
+socket.on('answer', async (answer) => {
+    console.log('Answer received:', answer);
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+});
 
-        screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-        const video = document.createElement('video');
-        video.srcObject = screenStream;
-        video.play();
+// Handle an ICE candidate from the server
+socket.on('ice-candidate', async (candidate) => {
+    console.log('ICE candidate received:', candidate);
+    await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+});
 
-        // Update UI
-        document.getElementById('startShare').disabled = true;
-        document.getElementById('stopShare').disabled = false;
-
-        // Capture frames and send them to the server
-        const captureInterval = setInterval(() => {
-            context.drawImage(video, 0, 0, canvas.width, canvas.height);
-            const frame = canvas.toDataURL('image/webp'); // Convert to base64
-            socket.emit('screen-data', frame);
-        }, 1);
-
-        // Stop sharing on stream end
-        screenStream.getVideoTracks()[0].addEventListener('ended', () => {
-            clearInterval(captureInterval);
-            stopScreenShare();
-        });
-    } catch (err) {
-        console.error('Screen sharing failed:', err.message || err);
-    }
-}
-
-
-function stopScreenShare() {
-    if (screenStream) {
-        screenStream.getTracks().forEach((track) => track.stop());
-        screenStream = null;
-    }
-    socket.emit('screen-data', null); // Stop sharing
-
-    // Update UI
-    document.getElementById('startShare').disabled = false;
-    document.getElementById('stopShare').disabled = true;
-
-    // Clear canvas
-    context.clearRect(0, 0, canvas.width, canvas.height);
-}
-
-function toggleFullScreen() {
-    if (document.fullscreenElement) {
-        document.exitFullscreen().catch((err) => {
-            console.error(`Error exiting full screen: ${err.message}`);
-        });
-    } else {
-        canvas.requestFullscreen().catch((err) => {
-            console.error(`Error entering full screen: ${err.message}`);
-        });
-    }
-}
